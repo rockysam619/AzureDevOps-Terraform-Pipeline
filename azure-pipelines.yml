@@ -1,0 +1,112 @@
+# Terraform Pipeline
+
+trigger:
+- none
+
+variables:
+- template: /FolderName/variables/common-vars.yml
+- name: resource_group_name
+  value: 
+- name: terraform_variables
+  value: >
+    -var="environment_name=$(environment_name)"
+    -var="subscription_id=$(subscription_id)"
+    -var="resource_group_name=$(resource_group_name)"
+stages:
+- stage: PLAN_DEV
+  variables:
+  - template: /FolderName/variables/dev-vars.yml
+  jobs:
+  - deployment: PLAN_DEV
+    pool:
+      name: Azure Pipelines
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 240
+    environment: "DEV-PLAN"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: /FolderName/templates/plan.yml
+            parameters:
+              service_connection_name: "${{variables.service_connection_name_dev}}"
+              terraform_variables: "${{variables.terraform_variables}}"
+
+- stage: APPLY_DEV
+  variables:
+  - template: /FolderName/variables/dev-vars.yml
+  jobs:
+  - job: DEV_APPLY_VALIDATION
+    displayName: Check terraform plan before apply
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        instructions: 'Please validate the terraform plan and resume or cancel'
+        onTimeout: 'reject'
+  - deployment: APPLY_DEV
+    dependsOn: DEV_APPLY_VALIDATION
+    pool:
+      name: Azure Pipelines
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 240
+    environment: "DEV-APPLY"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: /FolderName/templates/apply.yml
+            parameters:
+              service_connection_name: "${{variables.service_connection_name_dev}}"
+
+
+- stage: PLAN_PROD
+  variables:
+  - template: /FolderName/variables/prod-vars.yml
+  jobs:
+  - deployment: PLAN_PROD
+    pool:
+      name: Azure Pipelines
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 240
+    environment: "PROD-PLAN"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: /FolderName/templates/plan.yml
+            parameters:
+              service_connection_name: "${{variables.service_connection_name_prd}}"
+              terraform_variables: "${{variables.terraform_variables}}"
+
+
+- stage: APPLY_PROD
+  variables:
+  - template: /FolderName/variables/prod-vars.yml
+  jobs:
+  - job: PROD_APPLY_VALIDATION
+    displayName: Check terraform plan before apply
+    pool: server
+    timeoutInMinutes: 4320 # job times out in 3 days
+    steps:
+    - task: ManualValidation@0
+      timeoutInMinutes: 1440 # task times out in 1 day
+      inputs:
+        instructions: 'Please validate the terraform plan and resume or cancel'
+        onTimeout: 'reject'
+  - deployment: APPLY_PROD
+    dependsOn: PROD_APPLY_VALIDATION
+    pool:
+      name: Azure Pipelines
+      vmImage: ubuntu-latest
+    timeoutInMinutes: 240
+    environment: "PROD-APPLY"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: /FolderName/templates/apply.yml
+            parameters:
+              service_connection_name: "${{variables.service_connection_name_prd}}"

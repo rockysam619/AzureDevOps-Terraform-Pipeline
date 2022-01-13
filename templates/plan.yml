@@ -1,0 +1,83 @@
+parameters:
+- name: 'service_connection_name'
+  type: string
+- name: 'terraform_variables'
+  type: string
+
+steps:
+- checkout: self
+  fetchDepth: 1
+
+- task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: $(terraform_version)
+
+- task: AzurePowerShell@4
+  displayName: Remove resource Group Lock
+  inputs:
+    azureSubscription: "${{parameters.service_connection_name}}"
+    scriptType: inlineScript
+    inline: |
+      Get-AzResourceLock -ResourceGroupName "$(resource_group_name)" |
+        Where Name -eq 'CanNotDelete' |
+        Remove-AzResourceLock -Force
+    azurePowerShellVersion: latestVersion
+
+- task: AzureCLI@2
+  displayName: Check terraform directory contents
+  inputs:
+    azureSubscription: "${{parameters.service_connection_name}}"
+    scriptLocation: inlineScript
+    scriptType: pscore
+    inlineScript: |
+      ls $(System.DefaultWorkingDirectory)/$(environment_name)/terraform
+      
+
+- task: TerraformTaskV2@2
+  displayName: Init
+  inputs:
+    provider: 'azurerm'
+    backendServiceArm: "${{parameters.service_connection_name}}"
+    backendAzureRmResourceGroupName: "$(state_file_resource_group_name)"
+    backendAzureRmStorageAccountName: "$(state_file_storage_account_name)"
+    backendAzureRmContainerName: "$(state_file_storage_container_name)"
+    backendAzureRmKey: '$(environment_name).terraform.tfstate'
+    command: 'init'
+    commandOptions: '-input=false'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/$(environment_name)/terraform'
+
+- task: TerraformTaskV2@2
+  displayName: Plan
+  inputs:
+    provider: 'azurerm'
+    command: 'plan'
+    workingDirectory: '$(System.DefaultWorkingDirectory)/$(environment_name)/terraform'
+    commandOptions: >
+      -input=false
+      -out="$(System.DefaultWorkingDirectory)/$(environment_name).tfplan"
+      ${{parameters.terraform_variables}}
+    environmentServiceNameAzureRM: "${{parameters.service_connection_name}}"
+
+- task: AzureCLI@2
+  displayName: Store Plan
+  inputs:
+    azureSubscription: "${{parameters.service_connection_name}}"
+    scriptLocation: inlineScript
+    scriptType: pscore
+    inlineScript: |
+      $StoragePath = "$(Build.BuildId)/$(environment_name)"
+      $LocalPath = "$(System.DefaultWorkingDirectory)/$(environment_name).tfplan"
+      az storage blob upload --auth-mode login --account-name $(state_file_storage_account_name) --container-name $(plan_file_storage_container_name) --file $LocalPath --name $StoragePath
+
+- task: AzurePowerShell@4
+  displayName: Add Resource Group Lock
+  condition: always()
+  inputs:
+    azureSubscription: "${{parameters.service_connection_name}}"
+    scriptType: inlineScript
+    inline: |
+      Get-AzResourceLock -ResourceGroupName "$(resource_group_name)" -ErrorAction SilentlyContinue |
+        New-AzResourceLock -LockLevel CanNotDelete -LockName "CanNotDelete" -Force
+    azurePowerShellVersion: latestVersion
+     
